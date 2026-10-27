@@ -213,7 +213,10 @@ function stockOf(p) {
   const quantity  = Math.max(parseInt(p.quantity) || 1, 1);
   const soldCount = Math.max(parseInt(p.sold_count) || 0, 0);
   const remaining = Math.max(quantity - soldCount, 0);
-  return { quantity, soldCount, remaining, soldOut: !!p.sold || remaining <= 0 };
+  // Esgotado somente quando não restam unidades.
+  // Exceção: anúncios antigos de 1 unidade marcados como vendidos (sem sold_count) continuam vendidos.
+  const soldOut = remaining <= 0 || (!!p.sold && soldCount === 0 && quantity === 1);
+  return { quantity, soldCount, remaining, soldOut };
 }
 
 function sortImages(list) {
@@ -991,14 +994,13 @@ async function submitPurchase() {
       }
 
       const newCount = s.soldCount + 1;
-      const upd = { sold_count: newCount };
-      if (newCount >= s.quantity) { upd.sold = true; upd.sold_at = new Date().toISOString(); }
+      const upd = { sold_count: newCount, sold: newCount >= s.quantity };
+      if (newCount >= s.quantity) upd.sold_at = new Date().toISOString();
 
       const { data: updRows, error: soldErr } = await supabase
         .from('products')
         .update(upd)
         .eq('id', currentProductId)
-        .eq('sold', false)
         .eq('sold_count', s.soldCount)
         .select('id');
       if (soldErr) throw new Error(soldErr.message);
@@ -1273,6 +1275,7 @@ async function renderAdminProducts() {
              style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;
                     gap:0.5rem;padding:1rem 1.25rem;cursor:pointer;user-select:none;">
           <div style="display:flex;align-items:center;gap:0.75rem;">
+            <span class="drag-handle" title="Arraste para cima ou para baixo para reordenar">⠿</span>
             <div style="display:flex;flex-direction:column;gap:4px;">
               <button title="Subir anúncio"  onclick="event.stopPropagation();moveProduct(${p.id},-1)" ${upDis}>▲</button>
               <button title="Descer anúncio" onclick="event.stopPropagation();moveProduct(${p.id},1)"  ${dnDis}>▼</button>
@@ -1340,6 +1343,7 @@ async function renderAdminProducts() {
 
   // Reabre os cards que estavam abertos antes de redesenhar
   openProductCards.forEach(id => setProductCardOpen(id, true));
+  bindProductDrag(list);
 }
 
 function setProductCardOpen(id, open) {
@@ -1443,6 +1447,61 @@ async function moveProduct(id, dir) {
   } catch(err) { alert('Erro ao reordenar: ' + err.message); }
 }
 
+// Move o anúncio diretamente para a posição de outro (usado pelo arrastar)
+async function moveProductTo(srcId, targetId) {
+  try {
+    const list = await fetchProductOrder();
+    const from = list.findIndex(p => p.id === srcId);
+    const to   = list.findIndex(p => p.id === targetId);
+    if (from === -1 || to === -1 || from === to) return;
+    const [item] = list.splice(from, 1);
+    list.splice(to, 0, item);
+    await persistProductOrder(list);
+    await renderAdminProducts();
+  } catch(err) { alert('Erro ao reordenar: ' + err.message); }
+}
+
+// Arrastar para reordenar — funciona com mouse e toque (Pointer Events)
+function bindProductDrag(list) {
+  list.querySelectorAll('.drag-handle').forEach(handle => {
+    handle.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      const card    = handle.closest('.product-edit-card');
+      const cards   = Array.from(list.querySelectorAll('.product-edit-card'));
+      const srcId   = parseInt(card.id.replace('pedit-', ''));
+      const srcIdx  = cards.indexOf(card);
+      const startY  = e.clientY;
+      const step    = card.offsetHeight + 16;
+      let targetIdx = srcIdx;
+
+      card.classList.add('dragging');
+      try { handle.setPointerCapture(e.pointerId); } catch(_) {}
+
+      const onMove = ev => {
+        const dy = ev.clientY - startY;
+        card.style.transform = 'translateY(' + dy + 'px)';
+        targetIdx = Math.max(0, Math.min(cards.length - 1, srcIdx + Math.round(dy / step)));
+        cards.forEach((c, i) => c.classList.toggle('drag-target', i === targetIdx && i !== srcIdx));
+      };
+      const onUp = async () => {
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        card.classList.remove('dragging');
+        card.style.transform = '';
+        cards.forEach(c => c.classList.remove('drag-target'));
+        if (targetIdx !== srcIdx) {
+          const targetId = parseInt(cards[targetIdx].id.replace('pedit-', ''));
+          await moveProductTo(srcId, targetId);
+        }
+      };
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
+    });
+  });
+}
+
 async function nextProductOrder() {
   const { data } = await supabase.from('products').select('sort_order')
     .order('sort_order', { ascending: false }).limit(1);
@@ -1453,7 +1512,7 @@ async function addNewProduct() {
   try {
     const { data, error } = await supabase
       .from('products')
-      .insert({ name: 'Novo produto', price: 100, description: '', quantity: 1, sold_count: 0, sort_order: await nextProductOrder() })
+      .insert({ name: 'Novo produto', price: 100, description: '', quantity: 1, sold_count: 0, sold: false, sort_order: await nextProductOrder() })
       .select().single();
     if (error) throw new Error(error.message);
     openProductCards.add(data.id);
