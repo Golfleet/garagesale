@@ -748,6 +748,30 @@ header {
   margin-bottom: 1rem;
   transition: background 0.3s;
 }
+.product-edit-card.dragging {
+  position: relative;
+  z-index: 5;
+  opacity: 0.92;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  user-select: none;
+}
+.product-edit-card.drag-target {
+  border-color: var(--purple);
+  box-shadow: 0 0 0 1px var(--purple);
+}
+.drag-handle {
+  cursor: grab;
+  color: var(--muted);
+  font-size: 16px;
+  padding: 6px 4px;
+  user-select: none;
+  touch-action: none;
+  border-radius: 6px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.drag-handle:hover { color: var(--purple-light); background: rgba(155, 81, 224, 0.12); }
+.drag-handle:active { cursor: grabbing; }
 .product-edit-card label {
   display: block;
   font-size: 11px;
