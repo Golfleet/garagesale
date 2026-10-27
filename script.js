@@ -814,7 +814,8 @@ async function openModal(id) {
 
   // Formulário normal de compra
   const opts = [];
-  for (let i = 1; i <= Math.min(Math.floor(p.price / 100), 10); i++)
+  const maxParcelas = Math.max(1, Math.min(Math.floor(p.price / 100), 10));
+  for (let i = 1; i <= maxParcelas; i++)
     opts.push('<option value="' + i + '">' + i + 'x de R$ ' + fmtM(p.price / i) + '</option>');
 
   content.innerHTML = '';
