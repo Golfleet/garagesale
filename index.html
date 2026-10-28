@@ -209,6 +209,7 @@
       </div>
       <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
         <button class="export-btn" onclick="exportCSV()">Exportar CSV</button>
+        <button class="export-btn" onclick="switchTab('users');setTimeout(function(){document.getElementById('my-pass-1')?.focus();},150)">Alterar senha</button>
         <button class="export-btn" onclick="showPage('page-terms')">← Voltar ao site</button>
         <button class="export-btn" onclick="adminLogout()">Sair</button>
         <button class="btn-danger" onclick="if(confirm('Apagar TODOS os pedidos?')) clearOrders()">
@@ -224,6 +225,7 @@
       <button class="tab-btn"         onclick="switchTab('products')">Produtos</button>
       <button class="tab-btn"         onclick="switchTab('categories')">Categorias</button>
       <button class="tab-btn"         onclick="switchTab('settings')">⚙️ Loja</button>
+      <button class="tab-btn"         onclick="switchTab('users')">Usuários</button>
     </div>
 
     <!-- Aba: Pedidos -->
@@ -257,6 +259,34 @@
     <!-- Aba: Configurações da Loja -->
     <div id="tab-settings" class="tab-content">
       <div id="settings-content"></div>
+    </div>
+
+    <!-- Aba: Usuários -->
+    <div id="tab-users" class="tab-content">
+      <div id="users-list"></div>
+
+      <div class="product-edit-card" style="margin-top:1rem;">
+        <p style="font-family:'Syne',sans-serif;font-weight:700;font-size:1rem;color:var(--white);margin-bottom:1rem;">
+          Novo administrador
+        </p>
+        <label>E-mail</label>
+        <input type="email" id="new-user-email" placeholder="email@golfleet.com.br" autocomplete="off">
+        <label>Senha</label>
+        <input type="password" id="new-user-pass" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+        <button class="btn-save" style="margin-top:1rem;" onclick="createAdminUser()">Criar administrador</button>
+      </div>
+
+      <div class="product-edit-card" style="margin-top:1rem;">
+        <p style="font-family:'Syne',sans-serif;font-weight:700;font-size:1rem;color:var(--white);margin-bottom:1rem;">
+          Alterar minha senha
+        </p>
+        <label>Nova senha</label>
+        <input type="password" id="my-pass-1" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+        <label>Confirmar nova senha</label>
+        <input type="password" id="my-pass-2" placeholder="Repita a nova senha" autocomplete="new-password"
+               onkeydown="if(event.key==='Enter') changeMyPassword()">
+        <button class="btn-save" style="margin-top:1rem;" onclick="changeMyPassword()">Alterar senha</button>
+      </div>
     </div>
 
   </div><!-- /admin-panel -->
