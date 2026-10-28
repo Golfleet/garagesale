@@ -566,11 +566,8 @@ header {
   margin-bottom: 0.9rem;
   line-height: 1.6;
   white-space: pre-line;   /* respeita as quebras de linha do admin (item 9) */
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  overflow-wrap: anywhere; /* quebra linhas longas para a linha de baixo */
+  word-break: break-word;
 }
 .product-footer {
   display: flex;
@@ -629,7 +626,7 @@ header {
 .modal-body { padding: 1.75rem; }
 .modal-category { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--purple-light); margin-bottom: 0.3rem; }
 .modal-title { font-size: 1.5rem; font-weight: 800; color: var(--white); margin-bottom: 0.7rem; }
-.modal-desc { font-size: 16px; color: var(--desc); line-height: 1.75; margin-bottom: 1.25rem; white-space: pre-line; }
+.modal-desc { font-size: 16px; color: var(--desc); line-height: 1.75; margin-bottom: 1.25rem; white-space: pre-line; overflow-wrap: anywhere; word-break: break-word; }
 .modal-stock { font-size: 13px; font-weight: 500; color: var(--purple-light); margin: -0.5rem 0 1rem; }
 .modal-price { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1.8rem; color: var(--purple-light); margin-bottom: 1.5rem; }
 
@@ -979,7 +976,7 @@ header {
   .products-row { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.75rem; }
   .product-info { padding: 0.85rem; }
   .product-name { font-size: 0.85rem; }
-  .product-desc { font-size: 11px; -webkit-line-clamp: 2; line-clamp: 2; }
+  .product-desc { font-size: 11px; }
   .product-price { font-size: 1rem; }
   .product-footer { flex-direction: column; align-items: flex-start; gap: 0.55rem; }
   .btn-buy { width: 100%; text-align: center; padding: 0.55rem; }
