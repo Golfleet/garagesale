@@ -1110,7 +1110,19 @@ async function checkAdmin() {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error) {
-    document.getElementById('pw-error').style.display = 'block';
+    const errEl = document.getElementById('pw-error');
+    errEl.textContent = 'Usuário ou senha incorretos.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  // Se a tabela admin_users existir e tiver registros, só e-mails nela têm acesso
+  const allowed = await isAdminAllowed(data.user.email);
+  if (!allowed) {
+    await supabase.auth.signOut();
+    const errEl = document.getElementById('pw-error');
+    errEl.textContent = 'Este usuário não tem acesso de administrador.';
+    errEl.style.display = 'block';
     return;
   }
 
@@ -1131,14 +1143,135 @@ async function adminLogout() {
   showPage('page-terms');
 }
 
+/* ══════════════════════════════════════
+   ADMIN — USUÁRIOS
+══════════════════════════════════════ */
+// Modo legado: se a tabela admin_users não existir ou estiver vazia,
+// qualquer usuário do Supabase Auth tem acesso (comportamento anterior)
+async function isAdminAllowed(email) {
+  const { data, error } = await supabase.from('admin_users').select('email');
+  if (error || !data || !data.length) return true;
+  return data.some(u => (u.email || '').toLowerCase() === (email || '').toLowerCase());
+}
+
+const ADMIN_USERS_SQL =
+  'create table if not exists admin_users (\n' +
+  '  id bigint generated always as identity primary key,\n' +
+  '  email text unique not null,\n' +
+  '  created_at timestamptz default now()\n' +
+  ');\n' +
+  'alter table admin_users enable row level security;\n' +
+  'create policy "admins_autenticados" on admin_users\n' +
+  '  for all to authenticated using (true) with check (true);\n' +
+  "insert into admin_users (email) values ('SEU-EMAIL@golfleet.com.br')\n" +
+  '  on conflict do nothing;';
+
+async function renderAdminUsers() {
+  const list = document.getElementById('users-list');
+  if (!list) return;
+  const { data, error } = await supabase.from('admin_users').select('*').order('created_at');
+
+  if (error) {
+    list.innerHTML =
+      '<div class="admin-card">' +
+        '<p style="font-size:13px;color:var(--text);margin-bottom:0.5rem;"><strong>Para ativar o gerenciamento de administradores</strong>, rode este SQL uma vez no Supabase (SQL Editor) e depois recarregue esta aba:</p>' +
+        '<pre style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:0.75rem;font-size:11px;color:var(--muted);white-space:pre-wrap;overflow-x:auto;">' + escHtml(ADMIN_USERS_SQL) + '</pre>' +
+        '<p class="small" style="margin-top:0.5rem;">Enquanto a tabela não existir, qualquer usuário cadastrado no Supabase Auth continua entrando no admin.</p>' +
+      '</div>';
+    return;
+  }
+
+  if (!data.length) {
+    list.innerHTML =
+      '<div class="admin-card">' +
+        '<p class="small">A lista está vazia — qualquer usuário do Supabase Auth tem acesso. ' +
+        'Cadastre abaixo os administradores (incluindo o seu próprio e-mail) para restringir o acesso a esta lista.</p>' +
+      '</div>';
+    return;
+  }
+
+  const myEmail = (currentUser?.email || '').toLowerCase();
+  list.innerHTML = data.map(u => {
+    const isMe = (u.email || '').toLowerCase() === myEmail;
+    return `<div class="admin-card">
+      <div class="order-row">
+        <div class="order-info">
+          <p><strong>${escHtml(u.email)}</strong> ${isMe ? '<span class="tag tag-blue">Você</span>' : ''}</p>
+          <p class="small" style="color:var(--muted)">Desde ${new Date(u.created_at).toLocaleString('pt-BR')}</p>
+        </div>
+        ${!isMe ? `<button onclick="deleteAdminUser(${u.id})"
+          style="background:rgba(224,82,82,0.08);border:1px solid rgba(224,82,82,0.25);
+                 color:#e06060;font-family:Syne,sans-serif;font-weight:600;font-size:11px;
+                 letter-spacing:0.08em;text-transform:uppercase;padding:0.3rem 0.7rem;
+                 border-radius:6px;cursor:pointer;">Remover acesso</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function createAdminUser() {
+  const emailEl = document.getElementById('new-user-email');
+  const passEl  = document.getElementById('new-user-pass');
+  const email   = emailEl.value.trim();
+  const pass    = passEl.value;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { alert('Informe um e-mail válido.'); return; }
+  if (pass.length < 6) { alert('A senha deve ter pelo menos 6 caracteres.'); return; }
+  try {
+    // signUp troca a sessão para o novo usuário — salvamos e restauramos a sessão do admin
+    const { data: sess } = await supabase.auth.getSession();
+    const prev = sess?.session;
+    const { data, error } = await supabase.auth.signUp({ email, password: pass });
+    if (error) throw new Error(error.message);
+    if (data?.session && prev) {
+      await supabase.auth.setSession({ access_token: prev.access_token, refresh_token: prev.refresh_token });
+    }
+    const { error: insErr } = await supabase.from('admin_users').insert({ email });
+    if (insErr && insErr.code !== '23505') {
+      if (String(insErr.message).includes('admin_users')) {
+        alert('Usuário criado no Supabase Auth, mas a tabela admin_users não existe.\nCrie-a com o SQL exibido nesta aba para gerenciar o acesso.');
+      } else {
+        throw new Error(insErr.message);
+      }
+    }
+    emailEl.value = ''; passEl.value = '';
+    await renderAdminUsers();
+    alert('Administrador criado: ' + email + '\n\nSe a confirmação de e-mail estiver ativa no Supabase, o usuário precisa confirmar o e-mail antes do primeiro login.');
+  } catch(err) { alert('Erro ao criar usuário: ' + err.message); }
+}
+
+async function deleteAdminUser(id) {
+  if (!confirm('Remover o acesso de administrador deste usuário?')) return;
+  try {
+    const { data: rows } = await supabase.from('admin_users').select('id');
+    if (rows && rows.length <= 1) { alert('Não é possível remover o último administrador da lista.'); return; }
+    const { error } = await supabase.from('admin_users').delete().eq('id', id);
+    if (error) throw new Error(error.message);
+    await renderAdminUsers();
+    alert('Acesso removido. A conta continua existindo no Supabase Auth, mas sem acesso ao painel.');
+  } catch(err) { alert('Erro: ' + err.message); }
+}
+
+async function changeMyPassword() {
+  const p1El = document.getElementById('my-pass-1');
+  const p2El = document.getElementById('my-pass-2');
+  const p1 = p1El.value, p2 = p2El.value;
+  if (p1.length < 6) { alert('A nova senha deve ter pelo menos 6 caracteres.'); return; }
+  if (p1 !== p2)     { alert('As senhas não coincidem.'); return; }
+  const { error } = await supabase.auth.updateUser({ password: p1 });
+  if (error) { alert('Erro ao alterar senha: ' + error.message); return; }
+  p1El.value = ''; p2El.value = '';
+  alert('Senha alterada com sucesso!');
+}
+
 function switchTab(tab) {
-  const tabs = ['orders', 'products', 'categories', 'settings'];
+  const tabs = ['orders', 'products', 'categories', 'settings', 'users'];
   document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', tabs[i] === tab));
   tabs.forEach(t => { document.getElementById('tab-'+t)?.classList.toggle('active', t === tab); });
   if (tab === 'orders')     renderAdminOrders();
   if (tab === 'products')   renderAdminProducts();
   if (tab === 'categories') renderAdminCategories();
   if (tab === 'settings')   renderAdminSettings();
+  if (tab === 'users')      renderAdminUsers();
 }
 
 /* ══════════════════════════════════════
@@ -1826,3 +1959,7 @@ window.deleteOrder         = deleteOrder;
 window.exportCSV           = exportCSV;
 window.removeReservation   = removeReservation;
 window.createReservation   = createReservation;
+window.renderAdminUsers    = renderAdminUsers;
+window.createAdminUser     = createAdminUser;
+window.deleteAdminUser     = deleteAdminUser;
+window.changeMyPassword    = changeMyPassword;
