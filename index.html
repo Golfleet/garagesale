@@ -38,6 +38,7 @@
   <!-- Direita: contador, tema e admin -->
   <div class="header-right">
     <span class="badge-header" id="header-status"></span>
+    <button class="terms-btn" onclick="showTerms()" title="Rever os termos e condições">Termos</button>
     <button
       class="theme-btn"
       onclick="toggleTheme()"
@@ -186,7 +187,7 @@
         Usuário ou senha incorretos.
       </p>
       <button
-        onclick="showPage('page-terms')"
+        onclick="backToSite()"
         style="margin-top:1rem;background:transparent;border:1px solid var(--border);color:var(--muted);
                font-family:'Syne',sans-serif;font-weight:600;font-size:13px;letter-spacing:0.06em;
                text-transform:uppercase;padding:0.75rem 1.5rem;border-radius:8px;cursor:pointer;
@@ -210,7 +211,7 @@
       <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
         <button class="export-btn" onclick="exportCSV()">Exportar CSV</button>
         <button class="export-btn" onclick="switchTab('users');setTimeout(function(){document.getElementById('my-pass-1')?.focus();},150)">Alterar senha</button>
-        <button class="export-btn" onclick="showPage('page-terms')">← Voltar ao site</button>
+        <button class="export-btn" onclick="backToSite()">← Voltar ao site</button>
         <button class="export-btn" onclick="adminLogout()">Sair</button>
         <button class="btn-danger" onclick="if(confirm('Apagar TODOS os pedidos?')) clearOrders()">
           Limpar pedidos
@@ -292,6 +293,21 @@
   </div><!-- /admin-panel -->
 </div><!-- /page-admin -->
 
+
+<!-- Restaura a página lembrada ANTES do script principal carregar (evita piscar os termos no F5) -->
+<script>
+(function () {
+  try {
+    if (sessionStorage.getItem('gs_terms_ok') !== '1') return;
+    var p = sessionStorage.getItem('gs_page');
+    if (p !== 'page-catalog' && p !== 'page-admin') return;
+    document.querySelectorAll('.page').forEach(function (el) { el.classList.remove('active'); });
+    document.getElementById(p).classList.add('active');
+    document.body.dataset.page = p;
+    if (p === 'page-admin') document.getElementById('admin-auth').style.display = 'none';
+  } catch (e) {}
+})();
+</script>
 
 <!-- config.js carrega as credenciais — não está no Git -->
 <script src="config.js"></script>
