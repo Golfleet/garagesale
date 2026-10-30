@@ -95,12 +95,48 @@ function toggleTheme() {
 /* ══════════════════════════════════════
    NAVEGAÇÃO
 ══════════════════════════════════════ */
+// Chaves de sessionStorage: sobrevivem ao F5, mas somem ao fechar a aba
+const TERMS_KEY = 'gs_terms_ok';
+const PAGE_KEY  = 'gs_page';
+
+function termsAccepted() {
+  try { return sessionStorage.getItem(TERMS_KEY) === '1'; } catch(e) { return false; }
+}
+
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+  document.body.dataset.page = id;                       // usado pelo CSS (botão "Termos")
+  try { sessionStorage.setItem(PAGE_KEY, id); } catch(e) {}  // lembra a página após o F5
+}
+
+// Mostra os termos novamente (botão "Termos" do cabeçalho)
+function showTerms() {
+  stopRealtime();
+  document.getElementById('modal-backdrop')?.classList.remove('open');
+  if (currentProductId) closeModal();
+  showPage('page-terms');
+  syncTermsUI();
+  window.scrollTo(0, 0);
+}
+
+// Deixa checkbox/botão coerentes com o aceite já dado (também corrige o checkbox
+// que o navegador "lembra" marcado após um F5)
+function syncTermsUI() {
+  const ok  = termsAccepted();
+  const cb  = document.getElementById('accept-terms');
+  const btn = document.getElementById('btn-accept');
+  if (cb)  cb.checked   = ok;
+  if (btn) btn.disabled = !ok;
+}
+
+// "Voltar ao site": catálogo se já aceitou os termos, senão tela de termos
+function backToSite() {
+  if (termsAccepted()) goToCatalog(); else showTerms();
 }
 
 async function goToCatalog() {
+  try { sessionStorage.setItem(TERMS_KEY, '1'); } catch(e) {}  // só chega aqui após aceitar os termos
   // Verifica status da loja
   try {
     const { data } = await supabase
@@ -1126,21 +1162,37 @@ async function checkAdmin() {
     return;
   }
 
-  currentUser = data.user;
+  await openAdminPanel(data.user);
+}
+
+async function openAdminPanel(user) {
+  currentUser = user;
   document.getElementById('admin-auth').style.display  = 'none';
   document.getElementById('admin-panel').style.display = 'block';
   document.getElementById('admin-user-badge').textContent =
-    (currentUser.user_metadata?.name || email) + ' · Admin';
+    (user.user_metadata?.name || user.email) + ' · Admin';
 
   await renderAdminCategories(); // carrega categorias primeiro
   await Promise.all([renderAdminOrders(), renderAdminProducts(), renderAdminSettings()]);
   switchTab('orders');
 }
 
+// Após F5 na área admin: reaproveita a sessão do Supabase Auth (se ainda válida)
+async function restoreAdmin() {
+  stopRealtime();
+  showPage('page-admin');
+  try {
+    const { data } = await supabase.auth.getSession();
+    const user = data?.session?.user;
+    if (user && await isAdminAllowed(user.email)) { await openAdminPanel(user); return; }
+  } catch(e) { /* cai no login */ }
+  showAdmin();
+}
+
 async function adminLogout() {
   await supabase.auth.signOut();
   currentUser = null;
-  showPage('page-terms');
+  backToSite();
 }
 
 /* ══════════════════════════════════════
@@ -1907,6 +1959,155 @@ function fmtM(v) {
 }
 
 /* ══════════════════════════════════════
+   ABA ÚNICA — impede abrir o site em 2 abas/janelas
+   (evita reservar/comprar dois itens ao mesmo tempo)
+   Uma aba "dona" renova um carimbo no localStorage a cada 3s;
+   as demais ficam bloqueadas até a dona fechar ou o usuário
+   clicar em "Usar esta aba".
+══════════════════════════════════════ */
+const TAB_ID        = 'tab_' + Math.random().toString(36).slice(2) + '_' + Date.now();
+const LOCK_KEY      = 'gs_active_tab';
+const LOCK_BEAT_MS  = 3000;    // frequência do "estou viva"
+const LOCK_STALE_MS = 20000;   // sem sinal por 20s = aba dona fechou/travou
+let lockTimer    = null;
+let blockedTimer = null;
+let tabBlocked   = false;
+
+function readLock() {
+  try { return JSON.parse(localStorage.getItem(LOCK_KEY) || 'null'); } catch(e) { return null; }
+}
+function writeLock() {
+  try { localStorage.setItem(LOCK_KEY, JSON.stringify({ id: TAB_ID, ts: Date.now() })); } catch(e) {}
+}
+function releaseLock() {
+  try { if (readLock()?.id === TAB_ID) localStorage.removeItem(LOCK_KEY); } catch(e) {}
+}
+function lockIsFree(l) {
+  return !l || l.id === TAB_ID || (Date.now() - l.ts) > LOCK_STALE_MS;
+}
+
+// Tenta assumir a trava. A releitura após 150ms resolve duas abas abrindo juntas.
+async function acquireTabLock() {
+  if (!lockIsFree(readLock())) return false;
+  writeLock();
+  await new Promise(r => setTimeout(r, 150));
+  const l = readLock();
+  return !l || l.id === TAB_ID;
+}
+
+function startLockHeartbeat() {
+  stopLockHeartbeat();
+  lockTimer = setInterval(() => {
+    const l = readLock();
+    if (l && !lockIsFree(l)) onLockLost(); else writeLock();
+  }, LOCK_BEAT_MS);
+}
+function stopLockHeartbeat() { if (lockTimer) { clearInterval(lockTimer); lockTimer = null; } }
+
+function startBlockedWatch() {
+  stopBlockedWatch();
+  blockedTimer = setInterval(() => { if (lockIsFree(readLock())) resumeFromBlock(); }, LOCK_BEAT_MS);
+}
+function stopBlockedWatch() { if (blockedTimer) { clearInterval(blockedTimer); blockedTimer = null; } }
+
+// Outra aba assumiu: pausa esta, libera a reserva e mostra o aviso
+async function onLockLost() {
+  if (tabBlocked) return;
+  tabBlocked = true;
+  stopLockHeartbeat();
+  stopRealtime();
+  document.getElementById('modal-backdrop')?.classList.remove('open');
+  document.getElementById('zoom-overlay')?.remove();
+  try { await removeReservation(); } catch(e) {}
+  currentProductId = null;
+  showBlockedScreen();
+  startBlockedWatch();
+}
+
+function showBlockedScreen() {
+  let el = document.getElementById('tab-blocked');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'tab-blocked';
+    el.className = 'tab-blocked';
+    el.innerHTML =
+      '<div class="tab-blocked-box">' +
+        '<div class="tab-blocked-icon">🔒</div>' +
+        '<h2>Garage Sale aberto em outra aba</h2>' +
+        '<p>Para que cada colaborador reserve um item por vez, o site só pode ficar aberto em uma aba ou janela.</p>' +
+        '<p>Feche a outra aba ou continue por aqui — a outra será pausada.</p>' +
+        '<button class="btn-primary" onclick="takeOverTab()">Usar esta aba</button>' +
+      '</div>';
+    document.body.appendChild(el);
+  }
+  el.style.display = 'flex';
+}
+function hideBlockedScreen() {
+  const el = document.getElementById('tab-blocked');
+  if (el) el.style.display = 'none';
+}
+
+// Reativa esta aba (a trava foi liberada ou o usuário pediu para usá-la)
+async function activateThisTab() {
+  tabBlocked = false;
+  stopBlockedWatch();
+  hideBlockedScreen();
+  startLockHeartbeat();
+  await bootApp();
+}
+async function resumeFromBlock() {
+  if (!tabBlocked) return;
+  if (await acquireTabLock()) await activateThisTab();
+}
+async function takeOverTab() {
+  if (!tabBlocked) return;
+  writeLock();                 // a outra aba percebe pelo evento 'storage' e se bloqueia
+  await activateThisTab();
+}
+
+// Reação imediata quando outra aba mexe na trava
+window.addEventListener('storage', e => {
+  if (e.key !== LOCK_KEY) return;
+  if (tabBlocked) { if (lockIsFree(readLock())) resumeFromBlock(); return; }
+  const l = readLock();
+  if (l && !lockIsFree(l)) onLockLost();
+});
+// Ao fechar/recarregar: libera a trava na hora (pagehide cobre celulares)
+window.addEventListener('beforeunload', releaseLock);
+window.addEventListener('pagehide',     releaseLock);
+// Volta do cache de navegação (botão "voltar" no celular): confere a trava de novo
+window.addEventListener('pageshow', e => {
+  if (!e.persisted || tabBlocked) return;
+  const l = readLock();
+  if (l && !lockIsFree(l)) onLockLost(); else writeLock();
+});
+
+/* ══════════════════════════════════════
+   INICIALIZAÇÃO — restaura a página após F5
+══════════════════════════════════════ */
+async function bootApp() {
+  let page = null;
+  try { page = sessionStorage.getItem(PAGE_KEY); } catch(e) {}
+
+  if (termsAccepted() && page === 'page-catalog') { await goToCatalog(); return; }
+  if (termsAccepted() && page === 'page-admin')   { await restoreAdmin(); return; }
+
+  showPage('page-terms');
+  syncTermsUI();
+}
+
+(async function init() {
+  if (await acquireTabLock()) {
+    startLockHeartbeat();
+    await bootApp();
+  } else {
+    tabBlocked = true;
+    showBlockedScreen();
+    startBlockedWatch();
+  }
+})();
+
+/* ══════════════════════════════════════
    EXPÕE TODAS AS FUNÇÕES PARA O HTML
    (necessário por causa do type="module")
 ══════════════════════════════════════ */
@@ -1916,6 +2117,9 @@ window.showAdmin           = showAdmin;
 window.checkAdmin          = checkAdmin;
 window.adminLogout         = adminLogout;
 window.showPage            = showPage;
+window.showTerms           = showTerms;
+window.backToSite          = backToSite;
+window.takeOverTab         = takeOverTab;
 window.closeModal          = closeModal;
 window.openModal           = openModal;
 window.submitPurchase      = submitPurchase;
